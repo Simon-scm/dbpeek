@@ -1,0 +1,85 @@
+# Python bytecode / cache
+__pycache__/
+*.py[cod]
+*$py.class
+wheels/
+
+# Virtual environments
+.venv
+.venv/
+venv/
+env/
+ENV/
+
+# uv / Python tooling
+.python-version
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# Test / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Type checker / linter caches
+.mypy_cache/
+.pyright/
+.ruff_cache/
+
+# IDEs / editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Local dbpeek config
+.dbpeek.toml
+.dbpeek.yaml
+.dbpeek.yml
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Packaging / installer artifacts
+pip-wheel-metadata/
+
+# Local profiling / debug output
+.prof
+*.prof
+
+# Optional local development data
+.dev/
+local/

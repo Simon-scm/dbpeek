@@ -1,0 +1,17 @@
+[project]
+name = "dbpeek"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "psycopg>=3.3.6",
+    "rich>=15.0.0",
+    "sqlalchemy>=2.1.3",
+    "typer>=0.27.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
