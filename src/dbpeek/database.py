@@ -58,7 +58,7 @@ class DatabaseContext:
 
     def get_rows(self, table_name: str, row_count: int):
         curr_table = Table(table_name, MetaData(), autoload_with=self.engine) 
-
+    
         with self.engine.connect() as conn:
             rows = conn.execute(statement=select(curr_table))
 
@@ -73,7 +73,7 @@ class DatabaseContext:
 
         return res
 
-    def get_tables(self):
+    def get_table_names(self):
         return self.inspector.get_table_names()
 
 
