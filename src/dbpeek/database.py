@@ -27,6 +27,7 @@ class DatabaseContext:
         self.engine: Engine = engine
         self.inspector: Inspector = inspector
 
+
     def get_db_metadata(self) -> DBMetadata:
         return DBMetadata(
             dbms=self.engine.dialect.name,
@@ -41,7 +42,7 @@ class DatabaseContext:
     def get_table_info(self, table_name: str) -> TableInfo:
         raw_columns = self.inspector.get_columns(table_name)
     
-        # Konvertiert das SQLAlchemy-Typ-Objekt in einen Text (z.B. "INTEGER")
+        # to convert the sqlalchemy typ object into text ("INTEGER")
         cleaned_columns = []
         for col in raw_columns:
             col_copy = col.copy()
@@ -56,7 +57,8 @@ class DatabaseContext:
             idx=self.inspector.get_indexes(table_name),
         )
 
-    def get_rows(self, table_name: str, row_count: int):
+
+    def get_rows(self, table_name: str, row_count: int | None = None) -> list:
         curr_table = Table(table_name, MetaData(), autoload_with=self.engine) 
     
         with self.engine.connect() as conn:
@@ -64,17 +66,34 @@ class DatabaseContext:
 
         res = [rows._metadata.keys._keys]
 
-        i = 1
+        i = 0
         for row in rows:
-            res.append(row)
-            if i >= row_count:
+            if row_count is not None and i >= row_count:
                 break
-            i += 1
+            res.append(row)
+            i+=1
 
         return res
 
-    def get_table_names(self):
-        return self.inspector.get_table_names()
+
+    def get_row_count(self, table_name: str) -> int:
+        return len(self.get_rows(table_name=table_name, row_count=-1)) - 1
+
+
+    def get_column_count(self, table_name) -> int:
+        return len(self.inspector.get_columns(table_name=table_name))
+
+
+    def get_table_names(self, schema_name: str | None = None) -> list[str]:
+        if not schema_name:
+            return self.inspector.get_table_names()
+        else:
+            return self.inspector.get_table_names(schema=schema_name)
+
+
+    def get_schema_names(self) -> list[str]:
+            return self.inspector.get_schema_names()
+
 
 
 
