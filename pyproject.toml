@@ -5,7 +5,7 @@ description = "CLI tool for quickly inspecting a db instance, it's tables and th
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "psycopg>=3.3.6",
+    "psycopg[binary]>=3.3.6",
     "pydantic>=2.14.0",
     "rich>=15.0.0",
     "sqlalchemy>=2.1.3",
