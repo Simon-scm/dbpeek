@@ -43,7 +43,10 @@ class DatabaseContext:
             username=self.engine.url.username,
         )
 
-
+    # parses input table name like "main.users" into TableRef structure -> consisting of name and schema
+    # function breaks done input_name at first "." everything before is schema everything behind is table name
+    # if schema contains a "." it has to be provided as input_schema over --schema option in cli
+    # then input_schema will not be None and will be set as schema
     def parse_table_ref(self, input_name: str, input_schema: str | None) -> TableRef:
         if input_schema is not None:
             return TableRef(name=input_name, schema_name=input_schema)
@@ -67,10 +70,25 @@ class DatabaseContext:
 
             else:
                 table_names =  self.inspector.get_table_names(schema=schema_name)
-                table_refs = [TableRef(name=table_name, schema_name=schema_name) for table_name in table_names]
+                table_refs.extend([TableRef(name=table_name, schema_name=schema_name) for table_name in table_names])
 
             return table_refs
 
+    # returns all view names including their schema or only view names (+schema) of a specific schema
+    def get_view_refs(self, schema_name: str | None = None) -> list[TableRef]:
+            view_refs: list[TableRef] = []
+
+            if not schema_name:
+                all_schemas: list[str] = self.get_schema_names()
+                for schema in all_schemas:
+                    view_names = self.inspector.get_view_names(schema=schema)
+                    view_refs.extend([TableRef(name=view_name, schema_name=schema) for view_name in view_names])
+
+            else:
+                view_names =  self.inspector.get_view_names(schema=schema_name)
+                view_refs.extend([TableRef(name=view_name, schema_name=schema_name) for view_name in view_names])
+
+            return view_refs
     
     # TODO: implement DBMS specific schema filter to filter out system schema if not actively wanted !!!
     def get_schema_names(self) -> list[str]:
@@ -126,8 +144,9 @@ class DatabaseContext:
 
         return table_infos
 
-    def get_rows(self, tabler_ref: TableRef, row_count: int | None = None) -> list:
-        curr_table = Table(name=tabler_ref.name, metadata=MetaData(), schema=tabler_ref.schema_name, autoload_with=self.engine) 
+
+    def get_rows(self, ref: TableRef, row_count: int | None = None) -> list:
+        curr_table = Table(ref.name, MetaData(), schema=ref.schema_name, autoload_with=self.engine) 
     
         with self.engine.connect() as conn:
             rows = conn.execute(statement=select(curr_table))
@@ -144,20 +163,29 @@ class DatabaseContext:
         return res
 
 
-    def get_row_count(self, table_ref: TableRef) -> int:
-        return len(self.get_rows(table_ref=table_ref, row_count=-1)) - 1
+    def get_row_count(self, ref: TableRef) -> int:
+        return len(self.get_rows(ref=ref, row_count=-1)) - 1
 
 
-    def get_column_count(self, table_ref: TableRef) -> int:
-        return len(self.inspector.get_columns(table_name=table_ref.name, schema=table_ref.schema_name))
+    def get_column_count(self, ref: TableRef) -> int:
+        return len(self.inspector.get_columns(table_name=ref.name, schema=ref.schema_name))
 
-    
+
+    def is_table(self, ref: TableRef) -> bool:
+         table_names = self.inspector.get_table_names(schema=ref.schema_name)
+
+         return True if ref.name in table_names else False
+
+    def is_view(self, ref: TableRef) -> bool:
+        view_names = self.inspector.get_view_names(schema=ref.schema_name)
+                 
+        return True if ref.name in view_names else False
    
 
 
 
 
-# if engine.connect() errors the error will propagate 
+# if engine.connect() errors the error will propagate and this specific connection url is dismissed
 # TODO: time out einbauen - wenn localhost versucht wird und dieser nicht up ist, startet ein endless try (vermutlich)
 # TODO: Überprüfen warum keine login Informationen nötig waren auf localhost
 def try_create_engine(url: str) -> Engine:
@@ -187,7 +215,7 @@ def resolve_db_conn(cli_url: str | None = None) -> DatabaseContext:
 
         try:
             engine = try_create_engine(url)
-            inspector = get_inspector(engine)
+            inspector = inspect(engine)
             return DatabaseContext(engine=engine, inspector=inspector) 
 
         # if db engine creation fails the error is saved in a var
@@ -201,9 +229,6 @@ def resolve_db_conn(cli_url: str | None = None) -> DatabaseContext:
     # if no valid engine was created and no error was occured -> there was no url provided at all
     raise RuntimeError("No database URL configured")
 
-
-def get_inspector(engine: Engine):
-        return inspect(engine)
 
 
 
