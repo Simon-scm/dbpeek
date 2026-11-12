@@ -1,9 +1,10 @@
 from typing import Annotated
 from sqlalchemy.exc import SQLAlchemyError
-from .database import resolve_db_conn, DatabaseContext, TableInfo, TableRef
+from .database import resolve_db_conn, DatabaseContext, TableInfo, InputRef, ResolvedRef
 import typer
 from rich.console import Console as RiConsole
 from rich.table import Table as RiTable
+from rich.text import Text
 from rich.tree import Tree as RiTree
 
 # TODO: 
@@ -15,6 +16,7 @@ from rich.tree import Tree as RiTree
 # Entrance point of the program 
 app = typer.Typer(invoke_without_command=True)
 ri_console = RiConsole()
+ri_error_console = RiConsole(stderr=True)
 
 
 # Function that runs everytime a command is called (also when the application gets run without any command)
@@ -26,10 +28,7 @@ def main(ctx: typer.Context, url: Annotated[str | None, typer.Option("--url", "-
         ctx.obj = db_conn
         
     except (SQLAlchemyError, RuntimeError) as exc:
-        ri_console.print(
-            f"Database connection failed: {exc}",
-            err=True,
-        )
+        ri_error_console.print(f"Database connection failed: {exc}", markup=False)
         raise typer.Exit(code=1)
 
     # if program was started without any command the app will run the info function
@@ -48,21 +47,27 @@ def info(ctx: typer.Context, table_name: Annotated[str, typer.Argument()] = None
             return
         
         except Exception as exc:
-            ri_console.print(exc)
+            ri_error_console.print(exc, markup=False)
             raise typer.Exit(code=1)
     else:
-        # If no schema is provided in tabl_name and also not in --schema option the name will be searched in all schemas and all information will be returned
+        # If no schema is provided in table_name and also not in the --schema option, the name will be searched in all schemas and all information will be returned
         # If --schema option is set everything in table_name will be interpreted as the pure tablename 
-        # -> false behaivior occurs if schema name is provide in table_name AND schema_name! 
-        table_ref: TableRef = db.parse_table_ref(input_name=table_name, input_schema=schema_name)
+        input_ref: InputRef = db.parse_input_ref(input_name=table_name, input_schema=schema_name)
         try:
-            table_info: list[TableInfo] = db.get_table_info(table_ref=table_ref)
-            for info in table_info:
+            resolved_refs: list[ResolvedRef] = db.resolve_table_ref(input_ref)
+            if len(resolved_refs) == 0:
+                raise Exception("Provided table does not exist")
+            
+            table_infos: list[TableInfo] = []
+            for ref in resolved_refs:
+                table_infos.append(db.get_table_info(ref))
+
+            for info in table_infos:
                 ri_console.print(info.model_dump_json(indent=2))
             return
         
         except Exception as exc:
-            ri_console.print(exc)
+            ri_error_console.print(exc, markup=False)
             raise typer.Exit(code=1)
 
 
@@ -71,12 +76,12 @@ def schemas(ctx: typer.Context):
     
     db: DatabaseContext = ctx.obj
     try:
-        schema_names = db.get_schema_names()
+        schema_names = db.get_all_schema_names()
         ri_console.print(schema_names)
         return
     
     except Exception as exc:
-        print(f"Failed to extract schema names from db: {exc}")
+        ri_console.print(f"Failed to extract schema names from db: {exc}")
         raise typer.Exit(code=1)
 
 
@@ -84,25 +89,23 @@ def schemas(ctx: typer.Context):
 @app.command()
 def tables(ctx: typer.Context, 
            relation: Annotated[bool, typer.Option("--rel", "-r")] = False, 
-           input_schema_name: Annotated[str | None, typer.Option("--schema", "-s")] = None,
+           schema_name: Annotated[str | None, typer.Option("--schema", "-s")] = None,
            toggle_schema_output: Annotated[bool, typer.Option("--shownoschema", "-sns")] = False):
     
     db: DatabaseContext = ctx.obj
     
     try:
-        schema_names = db.get_schema_names()
+        schema_names: list[str] = db.get_all_schema_names()
     except Exception as exc:
         ri_console.print(f"Failed to extract schema names from db: {exc}")
         raise typer.Exit(code=1)
-
     
-    if input_schema_name is not None and input_schema_name not in schema_names:
-        ri_console.print(f"Schema '{input_schema_name}' is not defined in the db")
-        return
-
+    if schema_name is not None and schema_name not in schema_names:
+        ri_console.print(f"Schema '{schema_name}' is not defined in the db")
+        raise typer.Exit(code=1)
     
-    try: # if schema_name == None this returns a list of all tables of all schemas (potentially different ones)
-        table_refs: list[TableRef] = db.get_table_refs(schema_name=input_schema_name) 
+    try:
+        table_refs: list[ResolvedRef]= db.get_all_tables(schema=schema_name)
     except Exception as exc:
         ri_console.print(f"Failed to extract table references from db: {exc}")
         raise typer.Exit(code=1)
@@ -115,6 +118,7 @@ def tables(ctx: typer.Context,
             ri_console.print([ ref.schema_name + "." + ref.name for ref in table_refs ])
         return
 
+    # TODO: Neue resolve Logik implementieren und Graph statt Tree erzeugen
     # Build up relational tree 
     else:
         all_table_rels: list[tuple] = []
@@ -189,19 +193,19 @@ def views(ctx: typer.Context, schema_name: Annotated[str, typer.Option("--schema
     db: DatabaseContext = ctx.obj
 
     try:
-        view_refs = db.get_view_refs(schema_name=schema_name)
-        if toggle_schema_output:
-            ri_console.print([ ref.name for ref in view_refs ])
-        else:
-            ri_console.print([ ref.schema_name + "." + ref.name for ref in view_refs ])
-        return
+        view_refs: list[ResolvedRef] = db.get_all_views(schema=schema_name)
     except Exception as exc:
         ri_console.print(f"Failed to extract view references from db: {exc}")
         raise typer.Exit(code=1)
 
+    if toggle_schema_output:
+        ri_console.print([ ref.name for ref in view_refs ])
+    else:
+        ri_console.print([ ref.schema_name + "." + ref.name for ref in view_refs ])
+    return
 
 
-# Show
+
 @app.command()
 def fks(ctx: typer.Context, table_name: Annotated[str, typer.Argument()] = None,
         schema_name: Annotated[str, typer.Option("--schema", "-s")] = None,
@@ -209,16 +213,29 @@ def fks(ctx: typer.Context, table_name: Annotated[str, typer.Argument()] = None,
     
     db: DatabaseContext = ctx.obj
 
-    # If no table name is specified -> returns all tables else only get the refernce object for the specified table
-    # If table is specified but no schema is specified -> returns all tables with the given name (out of all schemas)
-    if table_name is None:
-        table_refs = db.get_table_refs(schema_name=schema_name)
-    else:
-        ref = db.parse_table_ref(input_name=table_name, input_schema=schema_name)
+    try:
+        # If no table name is specified -> gets all tables of the specified schema, if no schema is speicified as well, all tables of all schemas are returned
+        if table_name is None:
+            resolved_refs: list[ResolvedRef] = db.get_all_tables(schema=schema_name)
+
+            if len(resolved_refs) == 0:
+                raise Exception("No tables found.")
+
+        # If table is specified returns all tables references with the given name (out of all schemas) or one table reference if schema is specified as well
+        else:
+            input_ref: InputRef = db.parse_input_ref(input_name=table_name, input_schema=schema_name)
+            resolved_refs: list[ResolvedRef]  = db.resolve_table_ref(input_ref=input_ref)
+
+            if len(resolved_refs) == 0:
+                raise Exception("Provided table does not exist.")
+            
+    except Exception as exc:
+        ri_error_console.print(f"Failed to extract table references: {exc}", markup=False)
+        raise typer.Exit(code=1)
 
     table_infos: list[TableInfo] = []
-    for ref in table_refs:
-        table_infos.extend(db.get_table_info(ref)) # extend because get_table_info() returns list
+    for ref in resolved_refs:
+        table_infos.append(db.get_table_info(ref))
 
     ri_trees: list[RiTree] = []
     for table in table_infos:
@@ -232,11 +249,14 @@ def fks(ctx: typer.Context, table_name: Annotated[str, typer.Argument()] = None,
             tree.add("null")
         else:
             for fk in table.fk:
-                if toggle_schema_output:
-                    child = f"{fk.get("constrained_columns")[0]} -> {fk.get("referred_table")}.{fk.get("referred_columns")[0]} (name: {fk.get("name")})"
-                else:
-                    child = f"{fk.get("constrained_columns")[0]} -> {fk.get("referred_schema")}.{fk.get("referred_table")}.{fk.get("referred_columns")[0]} (name: {fk.get("name")})"
-                tree.add(child)
+                target = fk["referred_table"]
+                target_schema = fk.get("referred_schema")
+                if target_schema is not None and not toggle_schema_output:
+                    target = f"{target_schema}.{target}"
+
+                pairs = zip(fk["constrained_columns"], fk["referred_columns"], strict=True)
+                mappings = ", ".join(f"{source} -> {target}.{column}" for source, column in pairs)
+                tree.add(Text(f"{mappings} (name: {fk.get('name')})"))
 
         ri_trees.append(tree)
 
@@ -251,54 +271,46 @@ def rows(
         ctx: typer.Context, 
         name: Annotated[str, typer.Argument()],
         schema_name: Annotated[str, typer.Option("--schema", "-s")] = None,
-        row_count: Annotated[int, typer.Option("--count", "-c")] = 10,
+        row_count: Annotated[int, typer.Option("--count", "-c", min=0)] = 10,
         all: Annotated[bool, typer.Option("--all", "-a")] = False):
 
-    if row_count < 0:
-        raise Exception(f"No negative number for rows to be printed allowed")
-    
     db: DatabaseContext = ctx.obj
    
-    ref = db.parse_table_ref(input_name=name, input_schema=schema_name)
-
-    table_schemas = db.get_table_schemas(ref.name)
-
-    if len(table_schemas) > 1 and ref.schema_name is None:
-        ri_console.print(f"Table/View with name: '{ref.name}' exists in more than one schema: {table_schemas}. Please specify one to extract rows.")
-        raise typer.Exit(code=1)
-
-    if (len(table_schemas) < 1) or (ref.schema_name is not None and ref.schema_name not in table_schemas):
-        ri_console.print(f"Provided{" schema: " + ref.schema_name + " with" if ref.schema_name is not None else ""} table/view: {ref.name} does not exist")
+    input_ref: InputRef = db.parse_input_ref(input_name=name, input_schema=schema_name)
+    try:
+        resolved_ref: ResolvedRef = db.resolve_relation_ref(input_ref)
+    except Exception as exc:
+        ri_error_console.print(str(exc), markup=False)
         raise typer.Exit(code=1)
 
     try:
         if all:
-            rows = db.get_rows(ref)
+            rows: list = db.get_rows(resolved_ref)
         else:
-            rows = db.get_rows(ref, row_count)
+            rows: list = db.get_rows(resolved_ref, row_count)
 
         if not rows:
-            raise Exception(f"Failed to load rows for table '{ref.name}' with schema: '{table_schemas[0]}'")
+            raise Exception(f"Failed to load rows of table/view: {resolved_ref.schema_name}.{resolved_ref.name}")
         
     except Exception as exc:
         ri_console.print(exc)
         raise typer.Exit(code=1)
 
     try:
-        rich_table = RiTable(title=table_schemas[0] + "." + ref.name)
+        rich_table = RiTable(title=Text(f"{resolved_ref.schema_name}.{resolved_ref.name}"))
         for column_name in rows[0]:
-            rich_table.add_column(column_name)
+            rich_table.add_column(Text(column_name))
 
         for row in rows[1:]:
             rich_table.add_row(
-                *("NULL" if value is None else str(value) for value in row)
+                *(Text("NULL" if value is None else str(value)) for value in row)
             )
 
         ri_console.print(rich_table)
         return
 
     except Exception as exc:
-        ri_console.print(f"Failed to print rows of table '{ref.name}' with schema: '{table_schemas[0]} to the terminal: {exc}")
+        ri_console.print(f"Failed to print rows of table/view '{resolved_ref.schema_name}.{resolved_ref.name}' to the terminal: {exc}")
         raise typer.Exit(code=1)
 
 
@@ -306,29 +318,24 @@ def rows(
 def count(ctx: typer.Context, name: Annotated[str, typer.Argument()], schema_name: Annotated[str, typer.Option("--schema", "-s")] = None):
     db: DatabaseContext = ctx.obj
 
-    ref = db.parse_table_ref(name, schema_name)
-
-    table_schemas = db.get_table_schemas(ref.name)
-    
-    if len(table_schemas) > 1 and ref.schema_name is None:
-        ri_console.print(f"Table/View with name: '{ref.name}' exists in more than one schema: {table_schemas}. Please specify one to extract rows.")
-        raise typer.Exit(code=1)
-
-    if (len(table_schemas) < 1) or (ref.schema_name is not None and ref.schema_name not in table_schemas):
-        ri_console.print(f"Provided{" schema: " + ref.schema_name + " with" if ref.schema_name is not None else ""} table/view: {ref.name} does not exist")
+    input_ref: InputRef = db.parse_input_ref(input_name=name, input_schema=schema_name)
+    try:
+        resolved_ref: ResolvedRef = db.resolve_relation_ref(input_ref)
+    except Exception as exc:
+        ri_error_console.print(str(exc), markup=False)
         raise typer.Exit(code=1)
     
     try:
-        row_count = db.get_row_count(ref)
-        column_count = db.get_column_count(ref)
+        row_count: int = db.get_row_count(resolved_ref)
+        column_count: int = db.get_column_count(resolved_ref)
 
-        ri_console.print(f"Table: {table_schemas[0]}.{ref.name}")
+        ri_console.print(f"Table: {resolved_ref.schema_name}.{resolved_ref.name}")
         ri_console.print(f"Rows: {row_count}")
         ri_console.print(f"Columns: {column_count}")
         return
 
     except Exception as exc:
-        ri_console.print(f"Failed to extract row and column count of '{table_schemas[0]}.{ref.name}': {exc}")
+        ri_console.print(f"Failed to extract row and column count of table/view '{resolved_ref.schema_name}.{resolved_ref.name}': {exc}")
         raise typer.Exit(code=1)
 
 
