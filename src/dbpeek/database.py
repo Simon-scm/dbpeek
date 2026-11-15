@@ -1,6 +1,9 @@
 from sqlalchemy import create_engine, func, inspect, Engine, MetaData, select, Table, table
+from sqlalchemy.engine import make_url
 from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.util import asbool
+from pathlib import Path
 from pydantic import BaseModel
 import os
 
@@ -29,6 +32,10 @@ class DBMetadata(BaseModel):
     host: str | None
     port: int | None
     username: str | None
+
+class DBpeekError(Exception):
+    pass
+
 
 
 class DatabaseContext:
@@ -75,7 +82,7 @@ class DatabaseContext:
                         table_refs.append(ResolvedRef(name=input_ref.name, schema_name=schema))
 
             else:
-                table_names =  self.inspector.get_table_names(schema=input_ref.schema_name)
+                table_names = self.inspector.get_table_names(schema=input_ref.schema_name)
                 if input_ref.name in table_names:
                     table_refs.append(ResolvedRef(name=input_ref.name, schema_name=input_ref.schema_name))
 
@@ -95,10 +102,9 @@ class DatabaseContext:
                     view_refs.append(ResolvedRef(name=input_ref.name, schema_name=schema))
 
         else:
-            table_names =  self.inspector.get_view_names(schema=input_ref.schema_name)
+            table_names = self.inspector.get_view_names(schema=input_ref.schema_name)
             if input_ref.name in table_names:
                 view_refs.append(ResolvedRef(name=input_ref.name, schema_name=input_ref.schema_name))
-
 
         return view_refs
 
@@ -106,16 +112,16 @@ class DatabaseContext:
     def resolve_relation_ref(self, requested: InputRef) -> ResolvedRef:
         schema = requested.schema_name
         if schema is not None and not self.inspector.has_schema(schema):
-            raise ValueError(f"Schema '{schema}' not found.")
+            raise DBpeekError(f"Schema '{schema}' not found.")
 
         matches = self.resolve_table_ref(requested) + self.resolve_view_ref(requested)
 
         if not matches:
-            raise ValueError(f"Table or View '{requested.name}' not found.")
+            raise DBpeekError(f"Table or View '{requested.name}' not found.")
 
         if len(matches) > 1:
             names = ", ".join(f"{ref.schema_name}.{ref.name}" for ref in matches)
-            raise ValueError(f"More than one relation found: {names}. Please specify a schema.")
+            raise DBpeekError(f"More than one relation found: {names}. Please specify a schema.")
 
         return matches[0]
 
@@ -181,7 +187,7 @@ class DatabaseContext:
 
     def get_rows(self, ref: ResolvedRef, row_count: int | None = None) -> list:
         if row_count is not None and row_count < 0:
-            raise ValueError("Row count must be non-negative")
+            raise DBpeekError("Row count must be non-negative")
 
         with self.engine.connect() as conn:
             target = Table(
@@ -194,7 +200,9 @@ class DatabaseContext:
 
             result = conn.execute(statement)
             columns = list(result.keys())
-            return [columns, *result.fetchall()]
+            rows = result.fetchall()
+
+            return [columns, *rows]
 
 
     def get_row_count(self, ref: ResolvedRef) -> int:
@@ -226,7 +234,24 @@ class DatabaseContext:
 # TODO: time out einbauen - wenn localhost versucht wird und dieser nicht up ist, startet ein endless try (vermutlich)
 # TODO: Überprüfen warum keine login Informationen nötig waren auf localhost
 def try_create_engine(url: str) -> Engine:
-    engine = create_engine(url)
+    try:
+        # handle sqlite db connections separatly as they should not be created in case of tiping error
+        parsed_url = make_url(url)
+        database = parsed_url.database
+        # if provided sqllite string is a uri set moder to only read and write ("rw") so no db is created
+        if parsed_url.get_backend_name() == "sqlite" and database not in (None, "", ":memory:"):
+            if database.startswith("file:") and asbool(parsed_url.query.get("uri", "false")):
+                mode = parsed_url.query.get("mode")
+                if mode in (None, "rwc") and database != "file::memory:":
+                    parsed_url = parsed_url.update_query_dict({"mode": "rw"})
+
+            # if sqlite string is a file path but does not exists -> error is raised directly so no db is mistakenly created
+            elif not Path(database).is_file():
+                raise DBpeekError(f"SQLite database file not found: {database}")
+
+        engine = create_engine(parsed_url)
+    except ValueError as exc:
+        raise DBpeekError("Invalid database URL.") from exc
 
     with engine.connect():
         pass
@@ -242,10 +267,10 @@ def resolve_db_conn(cli_url: str | None = None) -> DatabaseContext:
     else:
         candidates = [os.getenv("DBPEEK_DATABASE_URL"), os.getenv("DATABASE_URL")]
 
-    last_error: SQLAlchemyError | None = None
+    last_error: SQLAlchemyError | DBpeekError | None = None
 
     # for every possible url we try to create a valid db connection (engine)
-    # as soon as we successfully crate a connection we return the engine and inspector as DatabasContext
+    # as soon as we successfully create a connection we return the engine and inspector as DatabasContext
     for url in candidates:
         if not url:
             continue
@@ -257,14 +282,14 @@ def resolve_db_conn(cli_url: str | None = None) -> DatabaseContext:
 
         # if db engine creation fails the error is saved in a var
         # but no error is triggered yet, in case a valid url exitsts after the faulty one
-        except SQLAlchemyError as exc:
+        except (SQLAlchemyError, DBpeekError) as exc:
             last_error = exc
 
     # if no valid engine has been created we raise the last error
     if last_error:
         raise last_error
     # if no valid engine was created and no error was occured -> there was no url provided at all
-    raise RuntimeError("No database URL configured")
+    raise DBpeekError("No database URL configured")
 
 
 
