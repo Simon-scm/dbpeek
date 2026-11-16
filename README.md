@@ -1,15 +1,28 @@
 # dbpeek
 
-`dbpeek` is a lightweight command-line tool for quickly inspecting the structure and current state of a database during development.
+`dbpeek` is a lightweight CLI for inspecting databases during development. Use it to check a schema, trace a foreign key, get info about table properties or preview stored data straight from the terminal without writing SQL or having to open up a full GUI .
 
-The idea behind is to provide a fast alternative to opening a full database GUI whenever you only want to answer simple questions such as:
+| Command | What it shows |
+| --- | --- |
+| `info` | Connection details as JSON |
+| `info <table>` | Columns, keys, constraints, and indexes as JSON |
+| `schemas`, `tables`, `views` | Available schemas, tables, and views |
+| `fks [table]` | Foreign keys and their target columns |
+| `rows <name>` | A preview of a table or view, limited to 10 rows by default |
+| `count <name>` | Row and column counts for a table or view |
 
-- Which tables exist?
-- How are tables related?
-- What columns and constraints does a table contain?
-- What data is currently stored in a table?
-- Which database am I connected to?
+Use `schema.name` or `name --schema schema_name` to select a schema when names overlap. List commands such as `tables` and `views` also accept `--schema` as a filter.
 
-The tool is intended to work directly from the terminal and to provide concise, readable output for common database inspection tasks.
+## Quick start
 
-The tool is built on SQLAlchemy's database abstraction and is designed to work across SQLAlchemy-supported database systems. Compatibility may vary depending on the capabilities of the underlying dialect.
+From the repository root, with Python 3.13+ and uv installed, run these PowerShell commands against an existing SQLite database:
+
+```powershell
+uv sync
+$env:PYTHONPATH = "src"
+$env:DBPEEK_DATABASE_URL = "sqlite:///app.db"
+uv run python -m dbpeek tables
+uv run python -m dbpeek rows users --count 5
+```
+
+Set `DBPEEK_DATABASE_URL` to your SQLAlchemy connection URL. You can also pass `--url` before the command or use `DATABASE_URL` as a fallback. Feature support depends on the database dialect.

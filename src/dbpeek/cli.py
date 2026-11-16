@@ -188,9 +188,15 @@ def views(ctx: typer.Context, schema_name: Annotated[str, typer.Option("--schema
     
     db: DatabaseContext = get_db(ctx)
 
+    with handle_cli_errors("Failed to extract schema names from db"):
+            schema_names: list[str] = db.get_all_schema_names()
+        
     with handle_cli_errors("Failed to extract view references from db"):
-        view_refs: list[ResolvedRef] = db.get_all_views(schema=schema_name)
+        if schema_name is not None and schema_name not in schema_names:
+            raise DBpeekError(f"Schema '{schema_name}' not found.")
 
+        view_refs: list[ResolvedRef]= db.get_all_views(schema=schema_name)
+        
     if toggle_schema_output:
         ri_console.print([ ref.name for ref in view_refs ])
     else:
@@ -205,7 +211,13 @@ def fks(ctx: typer.Context, table_name: Annotated[str, typer.Argument()] = None,
     
     db: DatabaseContext = get_db(ctx)
 
+    with handle_cli_errors("Failed to extract schema names from db"):
+        schema_names: list[str] = db.get_all_schema_names()
+
     with handle_cli_errors("Failed to extract table references"):
+        if schema_name is not None and schema_name not in schema_names:
+            raise DBpeekError(f"Schema '{schema_name}' not found.")
+        
         # If no table name is specified -> gets all tables of the specified schema, if no schema is speicified as well, all tables of all schemas are returned
         if table_name is None:
             resolved_refs: list[ResolvedRef] = db.get_all_tables(schema=schema_name)

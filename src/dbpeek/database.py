@@ -22,8 +22,10 @@ class TableInfo(BaseModel):
     schema_name: str | None
     columns: list
     pk: dict
-    fk: list
-    idx: list
+    unique: list[dict]
+    check: list[dict]
+    fk: list[dict]
+    idx: list[dict]
 
 class DBMetadata(BaseModel):
     dbms: str
@@ -178,6 +180,8 @@ class DatabaseContext:
             schema_name=table_ref.schema_name,
             columns=cleaned_columns,
             pk=self.inspector.get_pk_constraint(table_ref.name, table_ref.schema_name),
+            unique=self.inspector.get_unique_constraints(table_ref.name, table_ref.schema_name),
+            check=self.inspector.get_check_constraints(table_ref.name, table_ref.schema_name),
             fk=self.inspector.get_foreign_keys(table_ref.name, table_ref.schema_name),
             idx=self.inspector.get_indexes(table_ref.name, table_ref.schema_name),
         )
