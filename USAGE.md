@@ -4,7 +4,7 @@ Use `dbpeek` to inspect a database from the terminal. Start with `schemas`, `tab
 
 ## Connecting
 
-Follow the [README quick start](README.md#quick-start) to run from the repository root. The examples use `uv run python -m dbpeek` and assume an existing SQLite database with a `users` table, an `orders` table that references it, and an `active_users` view.
+Follow the [local development setup](README.md#local-development) to run from the repository root. The examples use `uv run python -m dbpeek`. If you installed dbpeek from PyPI, replace that prefix with `dbpeek` or `dbpk`. The examples assume an existing SQLite database with a `users` table, an `orders` table that references it, and an `active_users` view.
 
 ```text
 uv run python -m dbpeek [GLOBAL OPTIONS] [COMMAND] [COMMAND OPTIONS]

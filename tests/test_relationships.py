@@ -76,7 +76,6 @@ def test_rel_hides_schema_in_cycle_labels(db, run_cli):
     assert output.splitlines() == ["employee", "└── employee ↺ cycle"]
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="Rich interprets table names as markup")
 def test_rel_preserves_markup_like_table_names(db, run_cli):
     with db.engine.begin() as conn:
         conn.exec_driver_sql('CREATE TABLE "[red]watch[/red]" (id INTEGER PRIMARY KEY)')

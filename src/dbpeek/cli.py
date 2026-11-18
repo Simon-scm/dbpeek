@@ -14,8 +14,8 @@ from contextlib import contextmanager
 # - All functions/commands need a header comment roughly explaining what the command does
 # - Include schema handling in --help -> define "helps" for all commands
 # - Maybe add select query option?
-# - Time out einbauen - wenn localhost versucht wird und dieser nicht up ist, startet ein endless try (vermutlich)
-# - Überprüfen warum keine login Informationen nötig waren um zu Postgers docker db auf localhost zuzugreifen
+# - Implement time out when connecting to db so no endless conn loop can arise
+# - Check Postgres Container connection for necessity of login information
 
 
 # Entrance point of the program 
@@ -44,9 +44,44 @@ def handle_cli_errors(database_error: str):
         ri_error_console.print(database_error, markup=False)
         raise typer.Exit(code=1) from None
 
+def build_tree(ref: ResolvedRef, toggle_schema: bool, all_table_rels: list[tuple[ResolvedRef,list[ResolvedRef]]],
+               shown: set[tuple[str, str]]) -> RiTree:
+    
+    # Initiate new tree root either with schema name or without depending on the toggle
+    label =  ref.name if toggle_schema else f"{ref.schema_name}.{ref.name}"
+    tree = RiTree(Text(label))
+
+    # Store visited refs in path to keep subtrees concise and to detect circular relations
+    path: set[tuple[str, str]] = set() 
+    
+    # Search for referrences and append recursively to the tree root (in-place)
+    append_to_tree(ref=ref, toggle_schema=toggle_schema, tree=tree, 
+                    all_table_rels=all_table_rels, path=path, shown=shown)
+
+    return tree
 
 
+def append_to_tree(ref: ResolvedRef, toggle_schema: bool, tree: RiTree, all_table_rels: list[tuple[ResolvedRef,list[ResolvedRef]]], 
+                   path: set[tuple[str, str]], shown: set[tuple[str, str]]) -> None:
+    
+    key = (ref.schema_name, ref.name)
+    shown.add(key)
+    current_path = path | {key}
 
+    for child_ref, child_relations in all_table_rels:
+        if ref not in child_relations:
+            continue
+
+        child_key = (child_ref.schema_name, child_ref.name)
+        label = child_ref.name if toggle_schema else f"{child_ref.schema_name}.{child_ref.name}"
+
+        if child_key in current_path:
+            tree.add(Text(f"{label} ↺ cycle"))
+            continue
+
+        child = tree.add(Text(label))
+        append_to_tree(child_ref, toggle_schema, child, all_table_rels, current_path, shown)
+        
 #----------------------------------------#
 
 
@@ -237,44 +272,6 @@ def relations(ctx: typer.Context, table_name: Annotated[str, typer.Argument()] =
     return
 
 
-def build_tree(ref: ResolvedRef, toggle_schema: bool, all_table_rels: list[tuple[ResolvedRef,list[ResolvedRef]]],
-               shown: set[tuple[str, str]]) -> RiTree:
-    
-    # Initiate new tree root either with schema name or without depending on the toggle
-    tree = RiTree(ref.name) if toggle_schema else RiTree(f"{ref.schema_name}.{ref.name}")
-
-    # Store visited refs in path to keep subtrees concise and to detect circular relations
-    path: set[tuple[str, str]] = set() 
-    
-    # Search for referrences and append recursively to the tree root (in-place)
-    append_to_tree(ref=ref, toggle_schema=toggle_schema, tree=tree, 
-                    all_table_rels=all_table_rels, path=path, shown=shown)
-
-    return tree
-
-
-def append_to_tree(ref: ResolvedRef, toggle_schema: bool, tree: RiTree, all_table_rels: list[tuple[ResolvedRef,list[ResolvedRef]]], 
-                   path: set[tuple[str, str]], shown: set[tuple[str, str]]) -> None:
-    
-    key = (ref.schema_name, ref.name)
-    shown.add(key)
-    current_path = path | {key}
-
-    for child_ref, child_relations in all_table_rels:
-        if ref not in child_relations:
-            continue
-
-        child_key = (child_ref.schema_name, child_ref.name)
-        label = child_ref.name if toggle_schema else f"{child_ref.schema_name}.{child_ref.name}"
-
-        if child_key in current_path:
-            tree.add(f"{label} ↺ cycle")
-            continue
-
-        child = tree.add(label)
-        append_to_tree(child_ref, toggle_schema, child, all_table_rels, current_path, shown)
-
-
 @app.command()
 def fks(ctx: typer.Context, table_name: Annotated[str, typer.Argument()] = None,
         schema_name: Annotated[str, typer.Option("--schema", "-s")] = None,
@@ -308,7 +305,8 @@ def fks(ctx: typer.Context, table_name: Annotated[str, typer.Argument()] = None,
     ri_trees: list[RiTree] = []
     for table in table_infos:
 
-        tree = RiTree(table.name) if toggle_schema_output else RiTree(f"{table.schema_name}.{table.name}")
+        label = table.name if toggle_schema_output else f"{table.schema_name}.{table.name}"
+        tree = RiTree(Text(label))
 
         if not table.fk:
             tree.add("null")
@@ -387,7 +385,7 @@ def count(ctx: typer.Context, name: Annotated[str, typer.Argument()], schema_nam
         row_count: int = db.get_row_count(resolved_ref)
         column_count: int = db.get_column_count(resolved_ref)
 
-        ri_console.print(f"{"Table" if db.is_table(resolved_ref) else "View"}: {resolved_ref.schema_name}.{resolved_ref.name}")
+        ri_console.print(Text(f"{"Table" if db.is_table(resolved_ref) else "View"}: {resolved_ref.schema_name}.{resolved_ref.name}"))
         ri_console.print(f"Columns: {column_count}")
         ri_console.print(f"Rows: {row_count}")
         
