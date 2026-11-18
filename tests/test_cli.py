@@ -77,7 +77,6 @@ def test_missing_explicit_table_is_an_error(db, run_cli, command):
     assert_error(run_cli(command, "missing"), "Provided table does not exist")
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="info omits UNIQUE and CHECK")
 def test_info_includes_declared_unique_and_check_constraints(db, run_cli):
     output = assert_ok(run_cli("info", "main.users"))
     assert "users_name_unique" in output
@@ -109,11 +108,9 @@ def test_fks_preserves_composite_column_order(db, run_cli, table, name, hide_sch
     assert f"x -> {target}.a, y -> {target}.b (name: {name})" in output
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="fks crashes on missing target columns")
 def test_fks_keeps_unresolved_targets_visible(db, run_cli):
     output = assert_ok(run_cli("fks", "main.orphan"))
-    assert "parent_id" in output
-    assert "missing_parent" in output
+    assert "parent_id -> main.missing_parent.<unknown column>" in output
 
 
 def test_fks_formats_a_cross_schema_target_from_inspector(cross_schema_catalog, run_cli):
@@ -233,7 +230,7 @@ def test_database_errors_use_cli_message(db, run_cli, monkeypatch, command, meth
     assert "raw driver detail" not in result.stderr
 
 
-@pytest.mark.parametrize("command", ["tables", "views", "info", "fks", "rows", "count", "schemas"])
+@pytest.mark.parametrize("command", ["tables", "views", "info", "fks", "rows", "count", "schemas", "relations"])
 def test_subcommand_help_works_without_database(run_cli, command):
     assert "Usage:" in assert_ok(run_cli(command, "--help"))
 

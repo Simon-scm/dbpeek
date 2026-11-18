@@ -2,6 +2,8 @@
 name = "dbpeek"
 version = "0.1.0"
 description = "CLI tool for quickly inspecting a db instance, it's tables and the stored data"
+license = "MIT"
+license-files = ["LICENSE.md"]
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -19,3 +21,14 @@ dev = [
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project.scripts]
+dbpeek = "dbpeek.cli:app"
+dbp = "dbpeek.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]

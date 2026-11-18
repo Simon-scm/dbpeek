@@ -10,10 +10,12 @@ from rich.tree import Tree as RiTree
 from contextlib import contextmanager
 
 # TODO: 
-# - Create real sqlite test db and pre define env variable?? -> at least give guidance on how to set it
+# - Give guidance on how to set env variable DBPEEKDATABASE
 # - All functions/commands need a header comment roughly explaining what the command does
 # - Include schema handling in --help -> define "helps" for all commands
 # - Maybe add select query option?
+# - Time out einbauen - wenn localhost versucht wird und dieser nicht up ist, startet ein endless try (vermutlich)
+# - Überprüfen warum keine login Informationen nötig waren um zu Postgers docker db auf localhost zuzugreifen
 
 
 # Entrance point of the program 
@@ -21,14 +23,16 @@ app = typer.Typer(invoke_without_command=True)
 ri_console = RiConsole()
 ri_error_console = RiConsole(stderr=True)
 
+
 #------------Helper Functions------------#
 def get_db(ctx: typer.Context) -> DatabaseContext:
     with handle_cli_errors("Database connection failed."):
         return resolve_db_conn(ctx.obj)
+    
 
 # DBPeekErrors (wrong use of the application) are explicity raised and addressed here 
 # Errors occuring while interacting with the db (SQLAlchemyErrors) are caught here and will be replaced by "database_error", a var
-# that can be defined in each command line function -> this is so SQLAlchemy do not propagte raw to the user
+# that can be defined in each command line function -> this is so SQLAlchemy do not propagate raw to the user
 @contextmanager
 def handle_cli_errors(database_error: str):
     try:
@@ -39,30 +43,12 @@ def handle_cli_errors(database_error: str):
     except SQLAlchemyError:
         ri_error_console.print(database_error, markup=False)
         raise typer.Exit(code=1) from None
-    
 
 
-def append_to_tree(ref: ResolvedRef, toggle_schema: bool, tree: RiTree, 
-                   table_rels: list[tuple[ResolvedRef,list[ResolvedRef]]], 
-                   visited: set[str]) -> None:
-    table_name = ref.schema_name + "." + ref.name
-    # check if table was already visited to prevent cycles
-    if table_name in visited:
-        return
 
-    visited.add(table_name)
-
-    # Every table which referres to the current table will get checked recursively
-    for child_ref, child_relations in table_rels:
-        if ref in child_relations:
-            if toggle_schema:
-                child = tree.add(child_ref.name)
-            else:
-                child = tree.add(child_ref.schema_name + "." + child_ref.name)
-            append_to_tree(ref=child_ref, toggle_schema=toggle_schema, tree=child,
-                            table_rels=table_rels, visited=visited)
 
 #----------------------------------------#
+
 
 #---------Commad Line Functions----------#
 
@@ -117,69 +103,25 @@ def schemas(ctx: typer.Context):
 
 
 @app.command()
-def tables(ctx: typer.Context, 
-           relation: Annotated[bool, typer.Option("--rel", "-r")] = False, 
-           schema_name: Annotated[str | None, typer.Option("--schema", "-s")] = None,
+def tables(ctx: typer.Context, schema_name: Annotated[str | None, typer.Option("--schema", "-s")] = None,
            toggle_schema_output: Annotated[bool, typer.Option("--shownoschema", "-sns")] = False):
     
     db: DatabaseContext = get_db(ctx)
     
     with handle_cli_errors("Failed to extract schema names from db"):
         schema_names: list[str] = db.get_all_schema_names()
-    
-    with handle_cli_errors("Failed to extract table references from db"):
+
         if schema_name is not None and schema_name not in schema_names:
             raise DBpeekError(f"Schema '{schema_name}' not found.")
-
+    
+    with handle_cli_errors("Failed to extract table references from db"):
         table_refs: list[ResolvedRef]= db.get_all_tables(schema=schema_name)
         
-    if not relation:
-        if toggle_schema_output:
-            ri_console.print([ ref.name for ref in table_refs ])
-        else:
-            ri_console.print([ ref.schema_name + "." + ref.name for ref in table_refs ])
-        return
-
-    # Build up relational tree 
+    if toggle_schema_output:
+        ri_console.print([ ref.name for ref in table_refs ])
     else:
-        all_table_rels: list[tuple[ResolvedRef,list[ResolvedRef]]] = []
-        # Get table info for all tables in scope to determine their relations to one another 
-        # so get_table_info() always returns list of len 1 
-        with handle_cli_errors(f"Failed to extract table infos to build relational view"):
-            for reference in table_refs:
-                info = db.get_table_info(reference) 
-
-                referred_tables: list[ResolvedRef] = []
-                for referral in info.fk:
-                    new_ref = ResolvedRef(name=referral.get("referred_table"), schema_name=referral.get("referred_schema"))
-                    referred_tables.append(new_ref)
-
-                # Build adjacency list of tables paired with tables they refer to
-                all_table_rels.append((reference, referred_tables))
-
-        # Build rich tree structure to print to console
-        rel_trees = []
-        # Go through every table on the top level of the recursion because we can have different trees (not connected to eachother)
-        for ref, relations in all_table_rels:
-            # If a table does not refer to any other tables its a root which could be referred by other tables
-            if not relations:    
-                # initiate new tree root either with schema name or without depending on the toggle
-                if toggle_schema_output:
-                    tree = RiTree(ref.name) 
-                else:
-                    tree = RiTree(ref.schema_name + "." + ref.name)
-
-                visited: set[str] = set()
-                # search for referrences and append recursively to the tree root (in-place)
-                append_to_tree(ref=ref, toggle_schema=toggle_schema_output, tree=tree, 
-                                table_rels=all_table_rels, visited=visited) 
-
-                rel_trees.append(tree) # append tree root to the list of all trees
-
-        for tree in rel_trees:
-            ri_console.print(tree)
-
-        return
+        ri_console.print([ f"{ref.schema_name}.{ref.name}" for ref in table_refs ])
+    return
 
 
 @app.command()
@@ -190,18 +132,147 @@ def views(ctx: typer.Context, schema_name: Annotated[str, typer.Option("--schema
 
     with handle_cli_errors("Failed to extract schema names from db"):
             schema_names: list[str] = db.get_all_schema_names()
-        
+            if schema_name is not None and schema_name not in schema_names:
+                raise DBpeekError(f"Schema '{schema_name}' not found.")   
+            
     with handle_cli_errors("Failed to extract view references from db"):
-        if schema_name is not None and schema_name not in schema_names:
-            raise DBpeekError(f"Schema '{schema_name}' not found.")
-
         view_refs: list[ResolvedRef]= db.get_all_views(schema=schema_name)
         
     if toggle_schema_output:
         ri_console.print([ ref.name for ref in view_refs ])
     else:
-        ri_console.print([ ref.schema_name + "." + ref.name for ref in view_refs ])
+        ri_console.print([ f"{ref.schema_name}.{ref.name}" for ref in view_refs ])
     return
+
+
+@app.command()
+def relations(ctx: typer.Context, table_name: Annotated[str, typer.Argument()] = None,
+                schema_name: Annotated[str, typer.Option("--schema", "-s")] = None,
+                toggle_schema_output: Annotated[bool, typer.Option("--shownoschema", "-sns")] = False):
+
+    db = get_db(ctx)
+
+    with handle_cli_errors("Failed to extract schema names from db"):
+        schema_names: list[str] = db.get_all_schema_names()
+
+        if schema_name is not None and schema_name not in schema_names:
+            raise DBpeekError(f"Schema '{schema_name}' not found")
+
+    with handle_cli_errors("Failed to extract table references from db"):
+        # Directly get all tables regardless of their schema and the requested schema because the relation can also go across schemas
+        all_table_refs: list[ResolvedRef] = db.get_all_tables()
+
+        # If table_name is specified, extract all matching table_refs and check if any exist
+        resolved_input_table_refs: list[ResolvedRef] = []
+        if table_name is not None:
+            parsed_input: InputRef = db.parse_input_ref(table_name, schema_name)
+
+            if parsed_input.schema_name is not None and parsed_input.schema_name not in schema_names:
+                raise DBpeekError(f"Schema '{parsed_input.schema_name}' not found")
+            
+            resolved_input_table_refs: list[ResolvedRef] = db.resolve_table_ref(parsed_input)
+
+            if len(resolved_input_table_refs) == 0:
+                raise DBpeekError(f"Table '{table_name}' not found")
+            
+        # If no table_name is provided, get all tbales of provided schema. If schema not provided as well then all tables are extracted.
+        else:
+            resolved_input_table_refs = db.get_all_tables(schema=schema_name)
+
+     # Get table info for all tables and determine/save their relations to one another
+    all_table_rels: list[tuple[ResolvedRef,list[ResolvedRef]]] = []
+   
+    with handle_cli_errors(f"Failed to extract table infos to build relational view"):
+        for reference in all_table_refs:
+            info: TableInfo = db.get_table_info(reference) 
+
+            referred_tables: list[ResolvedRef] = []
+            for referral in info.fk:
+                target_name = referral["referred_table"]
+                target_schema = referral.get("referred_schema")
+
+                # If database does not return a referred schema field, try to resolve the table name manually
+                if target_schema is None:
+                    input_ref = InputRef(name=target_name)
+                    resolved_ref = db.resolve_table_ref(input_ref)
+                    if len(resolved_ref) != 1:
+                        raise DBpeekError(f"Failed to extract schema for table '{target_name}' while building relational view")
+                    target_schema = resolved_ref[0].schema_name
+
+                target_ref = ResolvedRef(name=target_name, schema_name=target_schema)
+                referred_tables.append(target_ref)
+
+            # Build adjacency list of tables paired with tables they refer to
+            all_table_rels.append((reference, referred_tables))
+
+    # Build up relational tree (rich tree struct)
+    relation_trees: list[RiTree] = []
+    shown: set[tuple[str, str]] = set()
+
+    if table_name is not None:
+        roots = resolved_input_table_refs
+    else:
+        # Find roots within the selected schema, or across all tables if no schema was given.
+        selected_keys = {(ref.schema_name, ref.name) for ref in resolved_input_table_refs}
+        roots = [
+            ref for ref, relations in all_table_rels
+            if (ref.schema_name, ref.name) in selected_keys
+            and not any((target.schema_name, target.name) in selected_keys for target in relations)
+        ]
+
+    for ref in roots:
+        relation_trees.append(build_tree(ref, toggle_schema_output, all_table_rels, shown))
+
+    # A relational component without a root (cycle) still needs one starting table.
+    for ref in resolved_input_table_refs:
+        if (ref.schema_name, ref.name) not in shown:
+            relation_trees.append(
+                build_tree(ref, toggle_schema_output, all_table_rels, shown)
+            )
+
+    # Print trees to console
+    for tree in relation_trees:
+        ri_console.print(tree)
+
+    return
+
+
+def build_tree(ref: ResolvedRef, toggle_schema: bool, all_table_rels: list[tuple[ResolvedRef,list[ResolvedRef]]],
+               shown: set[tuple[str, str]]) -> RiTree:
+    
+    # Initiate new tree root either with schema name or without depending on the toggle
+    tree = RiTree(ref.name) if toggle_schema else RiTree(f"{ref.schema_name}.{ref.name}")
+
+    # Store visited refs in path to keep subtrees concise and to detect circular relations
+    path: set[tuple[str, str]] = set() 
+    
+    # Search for referrences and append recursively to the tree root (in-place)
+    append_to_tree(ref=ref, toggle_schema=toggle_schema, tree=tree, 
+                    all_table_rels=all_table_rels, path=path, shown=shown)
+
+    return tree
+
+
+def append_to_tree(ref: ResolvedRef, toggle_schema: bool, tree: RiTree, all_table_rels: list[tuple[ResolvedRef,list[ResolvedRef]]], 
+                   path: set[tuple[str, str]], shown: set[tuple[str, str]]) -> None:
+    
+    key = (ref.schema_name, ref.name)
+    shown.add(key)
+    current_path = path | {key}
+
+    for child_ref, child_relations in all_table_rels:
+        if ref not in child_relations:
+            continue
+
+        child_key = (child_ref.schema_name, child_ref.name)
+        label = child_ref.name if toggle_schema else f"{child_ref.schema_name}.{child_ref.name}"
+
+        if child_key in current_path:
+            tree.add(f"{label} ↺ cycle")
+            continue
+
+        child = tree.add(label)
+        append_to_tree(child_ref, toggle_schema, child, all_table_rels, current_path, shown)
 
 
 @app.command()
@@ -213,11 +284,10 @@ def fks(ctx: typer.Context, table_name: Annotated[str, typer.Argument()] = None,
 
     with handle_cli_errors("Failed to extract schema names from db"):
         schema_names: list[str] = db.get_all_schema_names()
-
-    with handle_cli_errors("Failed to extract table references"):
         if schema_name is not None and schema_name not in schema_names:
             raise DBpeekError(f"Schema '{schema_name}' not found.")
-        
+
+    with handle_cli_errors("Failed to extract table references"):
         # If no table name is specified -> gets all tables of the specified schema, if no schema is speicified as well, all tables of all schemas are returned
         if table_name is None:
             resolved_refs: list[ResolvedRef] = db.get_all_tables(schema=schema_name)
@@ -238,10 +308,7 @@ def fks(ctx: typer.Context, table_name: Annotated[str, typer.Argument()] = None,
     ri_trees: list[RiTree] = []
     for table in table_infos:
 
-        if toggle_schema_output:
-            tree = RiTree(table.name)
-        else:
-            tree = RiTree(table.schema_name + "." + table.name)
+        tree = RiTree(table.name) if toggle_schema_output else RiTree(f"{table.schema_name}.{table.name}")
 
         if not table.fk:
             tree.add("null")
@@ -252,8 +319,15 @@ def fks(ctx: typer.Context, table_name: Annotated[str, typer.Argument()] = None,
                 if target_schema is not None and not toggle_schema_output:
                     target = f"{target_schema}.{target}"
 
-                pairs = zip(fk["constrained_columns"], fk["referred_columns"], strict=True)
-                mappings = ", ".join(f"{source} -> {target}.{column}" for source, column in pairs)
+                source_columns = fk["constrained_columns"]
+                target_columns = fk.get("referred_columns") or []
+                if len(source_columns) != len(target_columns):
+                    target_columns = ["<unknown column>"] * len(source_columns)
+
+                pairs = zip(source_columns, target_columns, strict=True)
+                mappings = ", ".join(
+                    f"{source} -> {target}.{column or '<unknown column>'}" for source, column in pairs
+                )
                 tree.add(Text(f"{mappings} (name: {fk.get('name')})"))
 
         ri_trees.append(tree)

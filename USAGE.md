@@ -1,6 +1,6 @@
 # dbpeek usage
 
-Use `dbpeek` to inspect a database from the terminal. Start with `schemas`, `tables`, or `views` to find an object, then use `info`, `fks`, `rows`, or `count` to inspect it.
+Use `dbpeek` to inspect a database from the terminal. Start with `schemas`, `tables`, or `views` to find an object. Use `info`, `rows`, or `count` to inspect it, and `relations` or `fks` to explore its foreign keys.
 
 ## Connecting
 
@@ -29,7 +29,7 @@ Running without a command is equivalent to `info` without a table name.
 
 Use a qualified name such as `main.users` or pass the plain name with `--schema main`. Use one form per call. When `--schema` is set, dbpeek treats the whole positional argument as the object name, including any dots.
 
-Without a schema, `info` and `fks` search all schemas for matching tables and show each match. `rows` and `count` search both tables and views and require exactly one match. If the name is ambiguous, they list the candidates and ask for a schema.
+Without a schema, `info`, `fks`, and `relations` search all schemas for matching tables when given an unqualified table name. `rows` and `count` search both tables and views and require exactly one match. If the name is ambiguous, they list the candidates and ask for a schema.
 
 ## Command reference
 
@@ -45,7 +45,8 @@ Without a table argument, prints connection metadata as JSON, including the data
 
 ```powershell
 uv run python -m dbpeek info
-uv run python -m dbpeek info main.users     <=>     uv run python -m dbpeek info users --schema main
+uv run python -m dbpeek info main.users
+uv run python -m dbpeek info users --schema main
 ```
 
 ### `schemas`
@@ -60,17 +61,15 @@ uv run python -m dbpeek schemas
 
 ### `tables`
 
-`tables [--schema SCHEMA] [--shownoschema] [--rel]`
+`tables [--schema SCHEMA] [--shownoschema]`
 
 Lists tables across all visible schemas by default. Names are displayed as `schema.table`.
 
 - `--schema SCHEMA`, `-s SCHEMA` lists tables in one schema.
 - `--shownoschema`, `-sns` displays names without schema prefixes.
-- `--rel`, `-r` displays relationship trees. Each tree starts at a table without outgoing foreign keys and shows the tables that reference it. This view is experimental and can omit rootless cycles, parts of shared branches, and targets outside the selected schema. Use `fks` to inspect the declared keys directly.
 
 ```powershell
 uv run python -m dbpeek tables --schema main
-uv run python -m dbpeek tables --rel
 ```
 
 ### `views`
@@ -84,6 +83,25 @@ Lists views across all visible schemas by default. Use `rows` or `count` to insp
 
 ```powershell
 uv run python -m dbpeek views --schema main --shownoschema
+```
+
+### `relations`
+
+`relations [TABLE] [--schema SCHEMA] [--shownoschema]`
+
+Draws trees of incoming foreign key references. A child table has a foreign key pointing to its parent. Use `fks` to see the outgoing keys and their column mappings.
+
+- With a table name, starts a tree at each matching table.
+- With `--schema SCHEMA` or `-s SCHEMA` only, limits the starting tables to that schema. Referencing tables from other schemas can still appear as children.
+- With neither, shows an overview across all visible schemas.
+- `--shownoschema`, `-sns` hides schema prefixes in the tree.
+
+An overview starts with tables that have no outgoing foreign keys to other tables in the selection, then starts a tree for any table still missing from the output. This gives a cycle with no natural root a starting point without showing the same loop from every table. If a branch reaches a table already on its path, the repeated node is marked `↺ cycle` and the branch ends.
+
+```powershell
+uv run python -m dbpeek relations
+uv run python -m dbpeek relations --schema main
+uv run python -m dbpeek relations main.users
 ```
 
 ### `fks`
@@ -126,3 +144,7 @@ Reports the number of columns and rows in a single table or view.
 ```powershell
 uv run python -m dbpeek count main.active_users
 ```
+
+## License
+
+Released under the [MIT License](LICENSE.md).

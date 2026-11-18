@@ -110,7 +110,7 @@ class DatabaseContext:
 
         return view_refs
 
-    # resolves and returns exactly one view or table (for commands that operate on exactly one reference which can be a table OR a view like "rows" or " count")  
+    # resolves and returns exactly one view or table (for commands that operate on exactly one reference which can be a table OR a view like "rows" or "count")  
     def resolve_relation_ref(self, requested: InputRef) -> ResolvedRef:
         schema = requested.schema_name
         if schema is not None and not self.inspector.has_schema(schema):
@@ -235,8 +235,6 @@ class DatabaseContext:
 
 
 # if engine.connect() errors the error will propagate and this specific connection url is dismissed
-# TODO: time out einbauen - wenn localhost versucht wird und dieser nicht up ist, startet ein endless try (vermutlich)
-# TODO: Überprüfen warum keine login Informationen nötig waren auf localhost
 def try_create_engine(url: str) -> Engine:
     try:
         # handle sqlite db connections separatly as they should not be created in case of tiping error
